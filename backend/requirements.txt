@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+alembic
+numpy
+scikit-learn
+joblib
+sentence-transformers
+torch
