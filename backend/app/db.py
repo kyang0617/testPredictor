@@ -1,7 +1,7 @@
 import os
 import time
 from sqlalchemy import create_engine
-from sqlalchemy import sessionmaker, DeclaritiveBase
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
