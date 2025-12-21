@@ -5,9 +5,20 @@ from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, wait_for_db
 from .models import Entry
 from .schemas import EntryCreate, EntryOut
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Backend API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.on_event("startup")
 def on_startup():
     wait_for_db()
