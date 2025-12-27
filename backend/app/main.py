@@ -21,6 +21,19 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/
 _model = None
 _model_mtime = None
 
+app = FastAPI(title="Backend API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 def get_model():
     global _model, _model_mtime
     if not os.path.exists(MODEL_PATH):
@@ -68,18 +81,7 @@ def build_feature_vector(payload: EntryCreate, embedding: Optional[List[float]],
     return np.array(base + emb, dtype=float)
 
 
-app = FastAPI(title="Backend API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 @app.on_event("startup")
 def on_startup():
     wait_for_db()
