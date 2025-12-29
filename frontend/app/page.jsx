@@ -19,19 +19,28 @@ export default function Page() {
     sleep: "",
     hours_studied: "",
     feeling_text: "",
+    score: "", // optional: use for historical/labeled entries
   });
 
-  const [pred, setPred] = useState(null);
   const [status, setStatus] = useState("");
+  const [pred, setPred] = useState(null);
   const [entries, setEntries] = useState([]);
+
+  function setField(k, v) {
+    setForm((p) => ({ ...p, [k]: v }));
+  }
 
   async function refresh() {
     setStatus("");
     const uid = toNumberOrNull(form.user_id);
     if (!uid) return;
     const res = await fetch(`${API}/entries?user_id=${uid}`);
-    const data = await res.json();
-    setEntries(data);
+    if (!res.ok) {
+      const text = await res.text();
+      setStatus(`Fetch entries failed: ${res.status} ${text}`);
+      return;
+    }
+    setEntries(await res.json());
   }
 
   useEffect(() => {
@@ -39,15 +48,7 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function setField(k, v) {
-    setForm((p) => ({ ...p, [k]: v }));
-  }
-
-  async function predictAndSave(e) {
-    e.preventDefault();
-    setStatus("Predicting...");
-    setPred(null);
-
+  function buildPayload(includeScore) {
     const payload = {
       user_id: toNumberOrNull(form.user_id),
       test_id: toNumberOrNull(form.test_id),
@@ -57,13 +58,22 @@ export default function Page() {
       hours_studied: toNumberOrNull(form.hours_studied),
       feeling_text: form.feeling_text || null,
     };
+    if (includeScore) payload.score = toNumberOrNull(form.score);
+    return payload;
+  }
 
+  async function saveEntry(e) {
+    e.preventDefault();
+    setPred(null);
+    setStatus("Saving entry...");
+
+    const payload = buildPayload(true);
     if (!payload.user_id || !payload.test_id) {
       setStatus("user_id and test_id are required.");
       return;
     }
 
-    const res = await fetch(`${API}/predict`, {
+    const res = await fetch(`${API}/entries`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -71,45 +81,94 @@ export default function Page() {
 
     if (!res.ok) {
       const text = await res.text();
-      setStatus(`Predict failed: ${res.status} ${text}`);
+      setStatus(`Save failed: ${res.status} ${text}`);
       return;
     }
 
     const out = await res.json();
-    setPred(out.predicted_score);
-    setStatus(`Saved prediction as entry_id=${out.entry_id}`);
+    setStatus(`Saved entry id=${out.id}${out.score != null ? " (labeled)" : ""}`);
     await refresh();
   }
 
-  async function labelEntry(entryId, scoreVal) {
-    const score = toNumberOrNull(scoreVal);
-    if (score === null) return;
+  async function predict(e) {
+    e.preventDefault();
+    setPred(null);
+    setStatus("Checking training status...");
 
-    setStatus(`Labeling entry ${entryId}...`);
-    const res = await fetch(`${API}/entries/${entryId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ score }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      setStatus(`Label failed: ${res.status} ${text}`);
+    const payload = buildPayload(false);
+    if (!payload.user_id || !payload.test_id) {
+      setStatus("user_id and test_id are required.");
       return;
     }
 
-    setStatus(`Labeled entry ${entryId} with score=${score}`);
+    // 1) Check whether we can/should train
+    const statusRes = await fetch(
+      `${API}/train/status?user_id=${payload.user_id}&test_id=${payload.test_id}`
+    );
+    if (!statusRes.ok) {
+      const text = await statusRes.text();
+      setStatus(`Train status failed: ${statusRes.status} ${text}`);
+      return;
+    }
+
+    const s = await statusRes.json();
+
+    // 2) If model doesn't exist but we can train, train now
+    if (!s.model_exists || s.needs_retrain) {
+      if (!s.can_train) {
+        const need = s.min_required - s.labeled_count;
+        setStatus(
+          `Model not trained yet. Add ${need} more labeled entries (with score) to train.`
+        );
+        return;
+      }
+
+      setStatus(`Training model (${s.labeled_count} labeled rows)...`);
+      const trainRes = await fetch(`${API}/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: payload.user_id, test_id: payload.test_id }),
+      });
+
+      if (!trainRes.ok) {
+        const text = await trainRes.text();
+        setStatus(`Train failed: ${trainRes.status} ${text}`);
+        return;
+      }
+
+      const tr = await trainRes.json();
+      setStatus(`Trained! train_mae=${tr.train_mae.toFixed(2)}. Predicting...`);
+    } else {
+      setStatus("Model exists. Predicting...");
+    }
+
+    // 3) Predict (and backend stores prediction as an entry)
+    const predRes = await fetch(`${API}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!predRes.ok) {
+      const text = await predRes.text();
+      setStatus(`Predict failed: ${predRes.status} ${text}`);
+      return;
+    }
+
+    const out = await predRes.json();
+    setPred(out.predicted_score);
+    setStatus(`Predicted ${out.predicted_score.toFixed(2)} (saved as entry_id=${out.entry_id})`);
     await refresh();
   }
 
   return (
     <main style={{ maxWidth: 900, margin: "40px auto", fontFamily: "system-ui" }}>
-      <h1>Test Predictor (MVP)</h1>
+      <h1>Test Predictor</h1>
       <p style={{ color: "#666" }}>
-        Submit pre-test info → backend predicts + stores entry → later you label actual score.
+        Save entries anytime. Add labeled entries (with <code>score</code>) to train. Predict trains automatically once you have enough labeled data.
       </p>
 
-      <form onSubmit={predictAndSave} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16 }}>
+      <form style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <label>
             User ID
@@ -140,6 +199,11 @@ export default function Page() {
             Sleep (1–7)
             <input value={form.sleep} onChange={(e) => setField("sleep", e.target.value)} style={{ width: "100%", padding: 8 }} />
           </label>
+
+          <label>
+            Score (optional, for training)
+            <input value={form.score} onChange={(e) => setField("score", e.target.value)} style={{ width: "100%", padding: 8 }} placeholder="Use this for past tests" />
+          </label>
         </div>
 
         <label style={{ display: "block", marginTop: 12 }}>
@@ -148,8 +212,11 @@ export default function Page() {
         </label>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
-          <button type="submit" style={{ padding: "10px 14px", cursor: "pointer" }}>
-            Predict + Save
+          <button onClick={saveEntry} style={{ padding: "10px 14px", cursor: "pointer" }}>
+            Save Entry
+          </button>
+          <button onClick={predict} style={{ padding: "10px 14px", cursor: "pointer" }}>
+            Predict
           </button>
           <button type="button" onClick={refresh} style={{ padding: "10px 14px", cursor: "pointer" }}>
             Refresh
@@ -170,43 +237,19 @@ export default function Page() {
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
           {entries.map((e) => (
-            <EntryCard key={e.id} entry={e} onLabel={labelEntry} />
+            <div key={e.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <b>#{e.id}</b>
+                <span style={{ color: "#666", fontSize: 12 }}>{e.created_at}</span>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                test_id={e.test_id} | predicted={e.predicted_score ?? "—"} | actual={e.score ?? "—"}
+              </div>
+              {e.feeling_text ? <div style={{ marginTop: 6 }}><i>{e.feeling_text}</i></div> : null}
+            </div>
           ))}
         </div>
       )}
     </main>
-  );
-}
-
-function EntryCard({ entry, onLabel }) {
-  const [score, setScore] = useState("");
-
-  return (
-    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <b>#{entry.id}</b> test_id={entry.test_id}
-        </div>
-        <div style={{ color: "#666", fontSize: 12 }}>{entry.created_at}</div>
-      </div>
-
-      <div style={{ marginTop: 6 }}>
-        predicted={entry.predicted_score ?? "—"} | actual={entry.score ?? "—"} | hours={entry.hours_studied ?? "—"} | conf={entry.confidence ?? "—"} | stress={entry.stress ?? "—"} | sleep={entry.sleep ?? "—"}
-      </div>
-
-      {entry.feeling_text ? <div style={{ marginTop: 6, color: "#444" }}><i>{entry.feeling_text}</i></div> : null}
-
-      <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
-        <input
-          placeholder="Actual score"
-          value={score}
-          onChange={(e) => setScore(e.target.value)}
-          style={{ padding: 8, width: 140 }}
-        />
-        <button onClick={() => onLabel(entry.id, score)} style={{ padding: "8px 12px", cursor: "pointer" }}>
-          Label
-        </button>
-      </div>
-    </div>
   );
 }

@@ -18,6 +18,7 @@ class EntryCreate(BaseModel):
     sleep: Optional[float] = None
     hours_studied: Optional[float] = None
     feeling_text: Optional[str] = None
+    score: Optional[float] = None
     
 
 class EntryLabelUpdate(BaseModel):
@@ -43,6 +44,27 @@ class EntryOut(EntryCreate):
         class Config:
             orm_mode = True
             
+
+class TrainRequest(BaseModel):
+    user_id: int
+    test_id: int
+
+class TrainStatusResponse(BaseModel):
+    user_id: int
+    test_id: int
+    labeled_count: int
+    min_required: int
+    can_train: bool
+    model_exists: bool
+    trained_rows: int
+    needs_retrain: bool
+
+class TrainResponse(BaseModel):
+    user_id: int
+    test_id: int
+    trained_rows: int
+    train_mae: float
+    model_path: str
 
 class PredictRequest(EntryCreate):
     pass
