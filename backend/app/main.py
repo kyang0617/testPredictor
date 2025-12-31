@@ -154,14 +154,11 @@ def train_model_for(db: Session, user_id: int, test_id: int) -> Tuple[int, float
     ])
     model.fit(X, y)
 
-    model.trained_rows_ = int(len(y))
-    joblib.dump(model, path)
-    
     preds = model.predict(X)
     mae = float(mean_absolute_error(y, preds))
 
     path = model_path_for(user_id, test_id)
-    model.trained_rows_ = int(len(y))
+    model.trained_rows_ = int(len(y)) 
     joblib.dump(model, path)
 
     # refresh cache so next load pulls the new model
@@ -275,7 +272,17 @@ def predict(payload: PredictRequest, db: Session = Depends(get_db)):
 
     # store prediction request + prediction
     data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
-    row = Entry(**data, feeling_embedding=emb, predicted_score=pred, score=None)
+
+    # Remove score if it exists; predict entries should always be unlabeled initially
+    data.pop("score", None)
+
+    row = Entry(
+        **data,
+        feeling_embedding=emb,
+        predicted_score=pred,
+        score=None,
+    )
+
     db.add(row)
     db.commit()
     db.refresh(row)
